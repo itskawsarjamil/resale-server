@@ -303,6 +303,51 @@ app.get('/order/:id', async (req, res) => {
     res.send(order);
 })
 
+app.get("/issold/:id", async (req, res) => {
+    const id = req.params.id;
+    const query = { orderId: id };
+    // console.log(query);
+    const result = await paymentsCollection.findOne(query);
+    // console.log(result);
+    if (result) {
+        return res.send(true);
+    }
+    else {
+        return res.send(false);
+    }
+})
+
+app.delete("/deletebook/:id", async (req, res) => {
+    try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        // console.log(query);
+        const result = await booksCollection.deleteOne(query);
+        // console.log(result);
+        res.send(result);
+    }
+    catch (e) {
+        console.log(e);
+        res.send({
+            "status": false,
+            "error": e
+        })
+    }
+})
+
+// app.get('/adv', async (req, res) => {
+//     const query = {};
+//     const options = { upsert: true };
+//     const updateDoc = {
+//         $set: {
+//             adv: false
+//         },
+//     };
+//     const result = await booksCollection.updateMany(query, updateDoc, options);
+//     console.log(result);
+//     res.send(result);
+// })
+
 app.listen(port, () => {
     console.log(`resale server is running on port: ${port}`);
 })
