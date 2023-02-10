@@ -5,6 +5,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
 const stripe = require("stripe")(process.env.stripe_key);
 const port = process.env.PORT || 5000;
+const jwt = require('jsonwebtoken');
 
 app.use(cors());
 app.use(express.json());
@@ -34,6 +35,23 @@ const advCollection = client.db('resale').collection('adv');
 const wishlistCollection = client.db('resale').collection('wishlist');
 
 
+const verifyJWT = (req, res, next) => {
+    const authToken = req.headers.authorization;
+    if (!authToken) {
+        return res.status(401).send('unauthorized accessed');
+    }
+    const token = authToken.split(' ')[1];
+    jwt.verify(token, process.env.jwt_token, function (err, decoded) {
+        if (err) {
+            return res.sendStatus(403).send({
+                message: 'forbidden access'
+            })
+        }
+        req.decoded = decoded;
+    })
+    next();
+}
+
 
 app.post('/create-payment-intent', async (req, res) => {
     const order = req.body;
@@ -52,6 +70,23 @@ app.post('/create-payment-intent', async (req, res) => {
     });
 });
 
+app.post('/jwt', async (req, res) => {
+    // const email = req.query.email;
+    const email = req.body.email;
+    const query = {
+        email: email
+    }
+    const user = await usersCollection.findOne(query);
+
+    if (user) {
+        const token = jwt.sign({ email }, process.env.jwt_token, { expiresIn: '1h' });
+        // console.log(token);
+        return res.send({ Access_token: token })
+    }
+
+    res.status(403).send({ Access_token: '' });
+})
+
 app.post('/payments', async (req, res) => {
     const payment = req.body;
 
@@ -62,6 +97,8 @@ app.post('/payments', async (req, res) => {
     const productId = findOrderData.product_id;
     const advQuery = { _id: new ObjectId(productId) };
     const deletedresult = await advCollection.deleteOne(advQuery);
+
+
 
     //insert in payment collection
     const result = await paymentsCollection.insertOne(payment);
@@ -74,6 +111,21 @@ app.post('/payments', async (req, res) => {
         }
     }
     const updatedResult = await ordersCollection.updateOne(filter, updatedDoc)
+
+    //update books collection
+
+    const updatedDoczero = {
+        $set: {
+            sold: true
+        }
+    }
+    const a = await ordersCollection.findOne(filter);
+    const pid = a.product_id;
+    const aquery = { _id: new ObjectId(pid) }
+    const b = await booksCollection.updateOne(aquery, updatedDoczero);
+
+    //delete from wishlist
+    const c = await wishlistCollection.deleteOne({ product_id: pid });
     res.send(result);
 })
 
@@ -231,7 +283,7 @@ app.get('/categoryid', async (req, res) => {
     }
 })
 
-app.get("/books", async (req, res) => {
+app.get("/books", verifyJWT, async (req, res) => {
     try {
         const email = req.query.email;
         const query = { seller_email: email };
@@ -247,11 +299,43 @@ app.get("/books", async (req, res) => {
     }
 })
 
-app.post("/addbook", async (req, res) => {
+app.post("/addbook", verifyJWT, async (req, res) => {
     try {
+        const sellermail = req.body.seller_email;
+
+        if (req.decoded.email !== sellermail) {
+            return res.sendStatus(403).send({ message: 'forbidden access' });
+        }
         const data = req.body;
+        // console.log(data);
         const result = await booksCollection.insertOne(data);
+        console.log(result);
+        // const product_id = result.insertedId;
+        // const x = await booksCollection.findOne(result.insertedId);
+        // console.log(x);
         res.send(result);
+    }
+    catch (e) {
+        console.log(e);
+        res.send({
+            "status": false,
+            "error": e
+        })
+    }
+})
+app.get('/addbook', async (req, res) => {
+    try {
+        const pid = req.query.pid;
+        const query = {
+            _id: new ObjectId(pid)
+        }
+        const updatedDoc = {
+            $set: {
+                product_id: pid
+            }
+        }
+        const a = await booksCollection.updateOne(query, updatedDoc);
+        res.send(a);
     }
     catch (e) {
         console.log(e);
@@ -313,7 +397,7 @@ app.get('/orders', async (req, res) => {
     }
 })
 
-app.get("/buyers", async (req, res) => {
+app.get("/buyers", verifyJWT, async (req, res) => {
     try {
         const query = { role: "buyer" };
         const result = await usersCollection.find(query).toArray();
@@ -327,7 +411,7 @@ app.get("/buyers", async (req, res) => {
         })
     }
 })
-app.get("/sellers", async (req, res) => {
+app.get("/sellers", verifyJWT, async (req, res) => {
     try {
         const query = { role: "seller" };
         const result = await usersCollection.find(query).toArray();
@@ -410,8 +494,9 @@ app.delete("/deletebook/:id", async (req, res) => {
 })
 app.get('/wishlist', async (req, res) => {
     try {
+        const email = req.query.email;
         // console.log("inside of wishlist");
-        const query = {};
+        const query = { email: email };
         const result = await wishlistCollection.find(query).toArray();
         return res.send(result);
     }
@@ -425,6 +510,8 @@ app.get('/wishlist', async (req, res) => {
 })
 app.post('/wishlist/:id', async (req, res) => {
     try {
+        const email = req.body.email;
+        // console.log(email);
         const tempdata = {
             product_id: req.params.id
         }
@@ -432,7 +519,9 @@ app.post('/wishlist/:id', async (req, res) => {
         if (!findquery) {
             const query = { _id: new ObjectId(req.params.id) }
             const data = await booksCollection.findOne(query);
-            const result = await wishlistCollection.insertOne(data);
+            const updata = { ...data, email }
+            // console.log(updata);
+            const result = await wishlistCollection.insertOne(updata);
             return res.send(result);
             console.log(result);
         }
